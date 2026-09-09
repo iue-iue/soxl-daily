@@ -1,0 +1,43 @@
+name: SOXL daily judgment (code A)
+
+on:
+  schedule:
+    # UTC。13:08 = 22:08 JST（米国夏時間: 09:08 ET）／14:08 = 23:08 JST（米国冬時間: 09:08 ET）
+    # どちらの季節でも片方だけが ET 09:00〜09:25 の窓に入る。窓の外の回は codeA_gha.py が自分で終了する。
+    - cron: "8 13 * * 1-5"
+    - cron: "8 14 * * 1-5"
+  workflow_dispatch:   # 手動実行（動作確認用。GHA_FORCE=1 で窓ガードを無視）
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Run code A
+        env:
+          GHA_FORCE: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
+        run: |
+          mkdir -p out
+          python codeA_gha.py | tee out/latest_card.txt
+      - name: Keep dated copies
+        run: |
+          D=$(TZ=Asia/Tokyo date +%F)
+          if [ -s out/today_check.csv ]; then
+            cp out/today_check.csv "out/today_check_${D}.csv"
+            cp out/latest_card.txt "out/card_${D}.txt"
+          fi
+      - name: Commit results
+        run: |
+          git config user.name "soxl-bot"
+          git config user.email "soxl-bot@users.noreply.github.com"
+          git add out/
+          git diff --cached --quiet || git commit -m "code A $(TZ=Asia/Tokyo date '+%F %R JST') [skip ci]"
+          git push
