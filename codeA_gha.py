@@ -29,7 +29,7 @@ BASE_SIZE = 14
 #       夏時間・冬時間のどちらでも片方だけが窓に入る。遅延で窓を外れた回は出力しない）
 import sys, pandas as _pd
 _now_et = _pd.Timestamp.now(tz="America/New_York")
-if not (("GHA_FORCE" in __import__("os").environ) or
+if not ((__import__("os").environ.get("GHA_FORCE", "") == "1") or
         (_now_et.weekday() < 5 and (9, 0) <= (_now_et.hour, _now_et.minute) < (9, 25))):
     print("実行窓の外（ET %s）のため終了。出力は更新しません。" % _now_et.strftime("%Y-%m-%d %H:%M"))
     sys.exit(0)
