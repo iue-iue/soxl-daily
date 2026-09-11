@@ -38,8 +38,7 @@ jobs:
         run: |
           D=$(TZ=Asia/Tokyo date +%F)
           cp out/today_check.csv "out/today_check_${D}.csv"
-          cp out/latest_card.txt "out/card_${D}.txt"
-          fi
+          cp out/latest_card.txt "out/card_${D}.txt.
       - name: Commit results
         run: |
           git config user.name "soxl-bot"
