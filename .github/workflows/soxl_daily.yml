@@ -26,13 +26,19 @@ jobs:
           GHA_FORCE: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
         run: |
           mkdir -p out
-          python codeA_gha.py | tee out/latest_card.txt
+          python codeA_gha.py | tee run_output.txt
+          if grep -q "^FP RUN=" run_output.txt; then
+            cp run_output.txt out/latest_card.txt
+            echo "CARD_OK=1" >> "$GITHUB_ENV"
+          else
+            echo "窓の外または出力なし: out/ は更新しない"
+          fi
       - name: Keep dated copies
+        if: env.CARD_OK == '1'
         run: |
           D=$(TZ=Asia/Tokyo date +%F)
-          if [ -s out/today_check.csv ]; then
-            cp out/today_check.csv "out/today_check_${D}.csv"
-            cp out/latest_card.txt "out/card_${D}.txt"
+          cp out/today_check.csv "out/today_check_${D}.csv"
+          cp out/latest_card.txt "out/card_${D}.txt"
           fi
       - name: Commit results
         run: |
