@@ -2,14 +2,23 @@ name: SOXL daily judgment (code A)
 
 on:
   schedule:
-    # UTC。13:08 = 22:08 JST（米国夏時間: 09:08 ET）／14:08 = 23:08 JST（米国冬時間: 09:08 ET）
-    # どちらの季節でも片方だけが ET 09:00〜09:25 の窓に入る。窓の外の回は codeA_gha.py が自分で終了する。
+    # UTC。13:xx = 22:xx JST（米国夏時間: 09:xx ET）／14:xx = 23:xx JST（米国冬時間: 09:xx ET）
+    # どちらの季節でも片方の組だけが ET 09:00〜09:40 の窓に入る。窓の外の回は codeA_gha.py が自分で終了する。
+    # ★2026-10-19: 10/12〜10/16 は cron が 30〜240 分遅れて全回窓外に落ちた。遅延に備えて 09:02 ET の回を追加
+    #   （窓の始端 09:00 直後 ＝ 遅延への余裕が最大）。2回とも窓に入った日は後の回がカードを上書きする。
+    - cron: "2 13 * * 1-5"
     - cron: "8 13 * * 1-5"
+    - cron: "2 14 * * 1-5"
     - cron: "8 14 * * 1-5"
   workflow_dispatch:   # 手動実行（動作確認用。GHA_FORCE=1 で窓ガードを無視）
 
 permissions:
   contents: write
+
+# 2回が重なったときに push が衝突しないよう直列化する（待ちは最大1本。古い待ちは新しい回に置き換わる）
+concurrency:
+  group: soxl-daily
+  cancel-in-progress: false
 
 jobs:
   run:
@@ -46,4 +55,5 @@ jobs:
           git config user.email "soxl-bot@users.noreply.github.com"
           git add out/
           git diff --cached --quiet || git commit -m "code A $(TZ=Asia/Tokyo date '+%F %R JST') [skip ci]"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
           git push
