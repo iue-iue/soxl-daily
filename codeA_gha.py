@@ -1,5 +1,5 @@
 # ============================================================
-# 毎日の判定 v7.6（取得時刻 / 実行帯ガード / 当日除外 / FP行
+# 毎日の判定 v7.7（取得時刻 / 実行帯ガード / 当日除外 / FP行
 #                + 終値の二重確認 / 境界警告 / C2併記
 #                + バー配分ガード / DV_alt併記 / 09:30バーのFP追加）
 #   判定ロジックは v5 から変更なし
@@ -13,6 +13,9 @@
 #     (2) 6b) 暦チェック（OPEX日 / FOMC発表日）を表示。判定・サイズ計算は不変
 #   ★v7.6〈2026-09-20〉: ③のセル係数を 1.0 → 0.75 に（CELL3 として先頭に定数化）。`03` Q62／コードQ43 v2:
 #     ③=1.0 は較正後 DD95 −10.14%（許容 −10.0% 超）・③=0.75 は −9.65%。判定ロジックは不変・変わるのは③のサイズだけ
+#   ★v7.7〈2026-10-19〉: 加速型の第2条件の余裕「P9/前日終値−1」（余裕2）を1行表示し、|余裕2|<1% なら★★（`03` Q31-b・9/30 型）。
+#     FP 行に P5/P7/P9・余裕1（M1）・余裕2（M2）・加速型（ACC）を追加。**判定・サイズは不変（表示のみ）**
+#     ※この版が読む P5/P7/P9 は「当日ライブ版」の1時間足＝[HH:00,HH+1:00)。翌日以降に取り直した事後版は [HH−0:30,HH+0:30) で30分ずれる（`03` Q31-c・`01` F39）
 # ============================================================
 
 # ############################################################
@@ -27,16 +30,7 @@ BASE_SIZE = 14
 CELL3 = 0.75
 # ############################################################
 
-# ===== GitHub Actions 用の差分（ここだけ Colab 版と違う。判定ロジックは同一） =====
-#   (a) pip は requirements.txt で済ませる  (b) 出力先は out/  (c) 自動DLなし
-#   (d) 実行窓ガード: 米国東部時間 09:00〜09:25 の外なら何もせず終了（cron を 13:08/14:08 UTC の2本置き、
-#       夏時間・冬時間のどちらでも片方だけが窓に入る。遅延で窓を外れた回は出力しない）
-import sys, pandas as _pd
-_now_et = _pd.Timestamp.now(tz="America/New_York")
-if not ((__import__("os").environ.get("GHA_FORCE", "") == "1") or
-        (_now_et.weekday() < 5 and (9, 0) <= (_now_et.hour, _now_et.minute) < (9, 25))):
-    print("実行窓の外（ET %s）のため終了。出力は更新しません。" % _now_et.strftime("%Y-%m-%d %H:%M"))
-    sys.exit(0)
+!pip install yfinance -q
 import yfinance as yf, pandas as pd, numpy as np, datetime, os
 
 ET = "America/New_York"
@@ -294,8 +288,13 @@ if P5 and P7 and P9:
     print("加速型P9版: early %+.2f%% late %+.2f%% → %s" % (early*100, late*100, "★加速型（サイズ半分）" if acc else "非加速型"))
     margin = (late-early)*100
     print("   余裕 %+.3f pt %s" % (margin, "★★ 系統差・当日読みで反転しうる（`01` F39）" if abs(margin)<0.5 else ""))
+    # ★v7.7: 第2条件（P9 > 前日終値）の余裕。9/30 は余裕1が 2.18pt あっても第2条件の脚（+0.97%）で反転した（`03` Q31-b）
+    margin2 = (P9/pC-1)*100
+    print("   余裕2（P9/前日終値−1）%+.3f%% %s" % (margin2, "★★ 第2条件が薄い＝読み直しで反転しうる（9/30型・`03` Q31-b）" if abs(margin2)<1.0 else ""))
+    ACC, M1, M2 = int(acc), margin, margin2
 else:
     print("加速型判定: P7/P9未取得（22:00 JST以降に再実行）")
+    ACC, M1, M2 = -1, float("nan"), float("nan")
 
 # ---------- 6) 注文カード（v5.5） ----------
 print("="*60)
@@ -342,8 +341,7 @@ except Exception as _e:
     print("[暦] チェック失敗（判定には影響なし）: %s" % str(_e))
 
 # ---------- 7) 保存（★v6: 取得時刻と基準セッションを列で同梱） ----------
-os.makedirs("out", exist_ok=True)
-OUT = "out/today_check.csv"
+OUT = "/content/today_check.csv"
 out = df[["Datetime","Ticker","Open","High","Low","Close","Volume"]].copy()
 out["RUN_JST"] = RUN_JST
 out["RUN_ET"] = RUN_ET
@@ -361,7 +359,10 @@ out["ZEROV"] = ZEROV                       # ★v7.2: RTHの出来高0バー本�
 out.to_csv(OUT, index=False, encoding="utf-8-sig")
 if os.path.exists(OUT) and os.path.getsize(OUT)>0:
     print("保存OK: %s (%d行)  取得時刻列つき" % (OUT, len(out)))
-    # GitHub Actions では自動DLなし（ワークフローがコミットする）
+    try:
+        from google.colab import files; files.download(OUT)
+    except Exception as e:
+        print("!! 自動DL失敗: %s → 左のフォルダから手動DL" % str(e))
 
 # ---------- 8) 判定フィンガープリント（★v6新設・`03` Q19 / `04` §12） ----------
 # この1行をコピーして運用ログに貼る。同じ日に2回回して比較するときはコードJへ。
@@ -381,6 +382,9 @@ FP = "|".join([
     "C2=%d" % C2, "SRC2=%s" % ("%.4f" % SRC2 if SRC2 is not None else "NA"),
     "O930=%.4f" % O930, "H930=%.4f" % H930, "V930=%.0f" % V930,
     "LV=%.0f" % SL["V"].iloc[-1], "ZEROV=%d" % ZEROV,
+    # ★v7.7: 加速型の入力と余裕（当日読み・`03` Q31-b）
+    "P5=%s" % ("%.4f" % P5 if P5 else "NA"), "P7=%s" % ("%.4f" % P7 if P7 else "NA"), "P9=%s" % ("%.4f" % P9 if P9 else "NA"),
+    "ACC=%d" % ACC, "M1=%.4f" % M1, "M2=%.4f" % M2,
 ])
 print("")
 print("FP " + FP)
