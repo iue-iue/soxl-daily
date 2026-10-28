@@ -2,27 +2,62 @@ name: SOXL daily judgment (code A)
 
 on:
   schedule:
-    # UTC。13:08 = 22:08 JST（米国夏時間: 09:08 ET）／14:08 = 23:08 JST（米国冬時間: 09:08 ET）
-    # どちらの季節でも片方だけが ET 09:00〜09:25 の窓に入る。窓の外の回は codeA_gha.py が自分で終了する。
-    - cron: "8 13 * * 1-5"
-    - cron: "8 14 * * 1-5"
-  workflow_dispatch:   # 手動実行（動作確認用。GHA_FORCE=1 で窓ガードを無視）
+    # UTC・平日。GitHub の schedule は混雑時に数分〜数時間遅れる（2026-10-12〜20 は 27分〜6.7時間遅れて
+    # 09:00〜09:25 ET の窓を外し、出力ゼロが続いた）。対策: 早い時刻から毎時起動し、ジョブの中で
+    # 09:01 ET まで待ってから code A を回す（公開リポジトリなので待機時間は無料）。
+    # 夏時間: 09:00 ET = 13:00 UTC ／ 冬時間: 14:00 UTC。どちらの季節も 07:10〜14:10 UTC の毎時＋12:40・13:40 で覆う。
+    - cron: "10 7-14 * * 1-5"
+    - cron: "40 12,13 * * 1-5"
+  workflow_dispatch:   # 手動実行（動作確認用。GHA_FORCE=1 で窓ガードを無視・待機なし）
 
 permissions:
   contents: write
 
+# schedule の回は同時に1本だけ動かす（手動実行は別枠＝待たされない）。待機中の回が複数重ならない。後から来た回は pending になり、前の回が終わってから
+# 「本日の窓内カードは作成済み」を見て終了する。pending が入れ替わった回は cancelled 表示になるが正常）
+concurrency:
+  group: ${{ github.event_name == 'schedule' && 'codeA-window' || format('manual-{0}', github.run_id) }}
+  cancel-in-progress: false
+
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt
+
+      - name: Wait for the 09:00 ET window (scheduled runs only)
+        id: gate
+        if: github.event_name == 'schedule'
+        run: |
+          now=$(TZ=America/New_York date +%s)
+          today=$(TZ=America/New_York date +%F)
+          start=$(TZ=America/New_York date -d "$today 09:01" +%s)
+          end=$(TZ=America/New_York date -d "$today 09:25" +%s)
+          echo "起動 $(TZ=America/New_York date '+%F %H:%M') ET（$(TZ=Asia/Tokyo date '+%H:%M') JST）"
+          if [ "$now" -ge "$end" ]; then
+            echo "go=0" >> "$GITHUB_OUTPUT"; echo "窓（09:00〜09:25 ET）の後: 何もしない"; exit 0
+          fi
+          if [ "$now" -lt "$start" ]; then
+            wait=$((start - now))
+            if [ "$wait" -gt 21300 ]; then
+              echo "go=0" >> "$GITHUB_OUTPUT"; echo "窓まで ${wait}s は長すぎる（上限 5h55m）: 後の回に任せる"; exit 0
+            fi
+            echo "窓まで ${wait}s 待機"; sleep "$wait"
+          fi
+          git pull --ff-only origin main
+          if grep -q "取得時刻 .* / ${today} 09:[0-2][0-9] ET" out/latest_card.txt 2>/dev/null; then
+            echo "go=0" >> "$GITHUB_OUTPUT"; echo "本日の窓内カードは作成済み: 何もしない"; exit 0
+          fi
+          echo "go=1" >> "$GITHUB_OUTPUT"
+
       - name: Run code A
         id: runa
+        if: github.event_name == 'workflow_dispatch' || steps.gate.outputs.go == '1'
         env:
           GHA_FORCE: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
         run: |
@@ -41,6 +76,7 @@ jobs:
           cp out/today_check.csv "out/today_check_${D}.csv"
           cp out/latest_card.txt "out/card_${D}.txt"
       - name: Commit results
+        if: steps.runa.outputs.card_ok == '1'
         run: |
           git config user.name "soxl-bot"
           git config user.email "soxl-bot@users.noreply.github.com"
