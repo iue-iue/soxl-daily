@@ -30,7 +30,16 @@ BASE_SIZE = 14
 CELL3 = 0.75
 # ############################################################
 
-!pip install yfinance -q
+# ===== GitHub Actions 用の差分（ここだけ Colab 版と違う。判定ロジックは同一） =====
+#   (a) pip は requirements.txt で済ませる  (b) 出力先は out/  (c) 自動DLなし
+#   (d) 実行窓ガード: 米国東部時間 09:00〜09:25 の外なら何もせず終了（cron を 13:08/14:08 UTC の2本置き、
+#       夏時間・冬時間のどちらでも片方だけが窓に入る。遅延で窓を外れた回は出力しない）
+import sys, pandas as _pd
+_now_et = _pd.Timestamp.now(tz="America/New_York")
+if not ((__import__("os").environ.get("GHA_FORCE", "") == "1") or
+        (_now_et.weekday() < 5 and (9, 0) <= (_now_et.hour, _now_et.minute) < (9, 25))):
+    print("実行窓の外（ET %s）のため終了。出力は更新しません。" % _now_et.strftime("%Y-%m-%d %H:%M"))
+    sys.exit(0)
 import yfinance as yf, pandas as pd, numpy as np, datetime, os
 
 ET = "America/New_York"
@@ -341,7 +350,8 @@ except Exception as _e:
     print("[暦] チェック失敗（判定には影響なし）: %s" % str(_e))
 
 # ---------- 7) 保存（★v6: 取得時刻と基準セッションを列で同梱） ----------
-OUT = "/content/today_check.csv"
+os.makedirs("out", exist_ok=True)
+OUT = "out/today_check.csv"
 out = df[["Datetime","Ticker","Open","High","Low","Close","Volume"]].copy()
 out["RUN_JST"] = RUN_JST
 out["RUN_ET"] = RUN_ET
@@ -359,10 +369,7 @@ out["ZEROV"] = ZEROV                       # ★v7.2: RTHの出来高0バー本�
 out.to_csv(OUT, index=False, encoding="utf-8-sig")
 if os.path.exists(OUT) and os.path.getsize(OUT)>0:
     print("保存OK: %s (%d行)  取得時刻列つき" % (OUT, len(out)))
-    try:
-        from google.colab import files; files.download(OUT)
-    except Exception as e:
-        print("!! 自動DL失敗: %s → 左のフォルダから手動DL" % str(e))
+    # GitHub Actions では自動DLなし（ワークフローがコミットする）
 
 # ---------- 8) 判定フィンガープリント（★v6新設・`03` Q19 / `04` §12） ----------
 # この1行をコピーして運用ログに貼る。同じ日に2回回して比較するときはコードJへ。
